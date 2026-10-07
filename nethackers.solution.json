@@ -1,0 +1,8 @@
+{
+  "schema": "nethackers.solution/v1",
+  "name": "valkyrie-early-descent-v1",
+  "root": "autoascend",
+  "parents": [],
+  "influences": ["https://github.com/maciej-sypetkowski/autoascend"],
+  "entrypoint": "bot.py"
+}
