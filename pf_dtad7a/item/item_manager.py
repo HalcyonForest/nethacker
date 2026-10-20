@@ -153,6 +153,7 @@ class ItemManager:
         try:
             objs, glyphs, count, status, modifier, *args = \
                 self.parse_text(text, category, glyph)
+            original_buc_status = status
             category = O.get_category(objs[0])
         except:
             # TODO: when blind, it may not work as expected, e.g. "a shield", "a gem", "a potion", etc
@@ -192,6 +193,7 @@ class ItemManager:
                 objs = [self.glyph_to_object[glyphs[0]]]
 
         item = Item(objs, glyphs, count, status, modifier, *args, text)
+        item.original_buc_status = original_buc_status
 
         if item.is_possible_container() or item.is_container():
             if item.comment:

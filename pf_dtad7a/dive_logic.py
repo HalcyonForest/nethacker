@@ -1820,9 +1820,15 @@ class DiveLogic:
         self._task('go to mines branch')
         if agent.current_level().key() != key:
             path = agent.exploration.get_path_to_level(*key)
-            if path is None:
+            if not path:
                 return False
-            agent.exploration.follow_level_path_strategy(path, agent.exploration.go_to_strategy).run()
+            # Take only the next staircase, then replan from the observed level.
+            # The existing stair helper tolerates a blocked approach instead of
+            # asserting that a whole multi-level route arrived as predicted.
+            (sy, sx), _, direction = path[0]
+            if not self._take_stairs([(sy, sx)], direction):
+                self.exploration(None).until(agent, self._budgeted(
+                    lambda: agent.bfs()[sy, sx] != -1)).run()
             return True
         if (agent.blstats.y, agent.blstats.x) != (y, x):
             if agent.bfs()[y, x] == -1:

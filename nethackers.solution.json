@@ -1,6 +1,6 @@
 {
   "schema": "nethackers.solution/v1",
-  "name": "HalcyonForest-smart-development-v79",
+  "name": "HalcyonForest-smart-development-v118",
   "root": ".",
   "parents": [
     "github.com/zarutskiysy/nethack@9c1cc902b6d9d88e6a14e0c9e5dc7494d9882bcd",
@@ -19,7 +19,7 @@
     "github.com/zarutskiysy/nethack@96ef3261bd61e151858b181be95b066bbde9d6f4",
     "github.com/daglar-dragomirov/nethacker@0f440af6655ce126183a753ec6ff0f2aa1e68daf",
     "github.com/daglar-dragomirov/nethacker@cc23cb3c053e5424e674067b868f86b90ab8a2a8",
-    "github.com/HalcyonForest/nethacker@00da02ac01ee1b86f4a5fe08405cb4dda8f19e44"
+    "github.com/DT6A/nethacker@cfc97b826ad6dee10f29fa2b6093aaf7748715d0"
   ],
   "influences": [
     "github.com/CleverShovel/nethacker@0d1fb22498024cdcac06be9d15d0f70e8cae803c",

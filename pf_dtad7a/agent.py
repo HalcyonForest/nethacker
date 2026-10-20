@@ -2574,10 +2574,6 @@ class Agent:
     def eat_from_inventory(self):
         if self.blstats.hunger_state < Hunger.HUNGRY:
             yield False
-        # A polymorphed overloaded form must shed load before EAT can succeed (hack.c check_capacity).
-        # Returning control permits prayer, rehumanization and emergency strategies instead of zero-turn refusals.
-        if jf_config.LYCAN_FIXES and self.character.prop.polymorph and self.blstats.carrying_capacity >= 4:
-            yield False
         # hypothesis: prayer is the main food source, but a hunger prayer made on the bare ~900-1100 turn
         # starvation cycle comes too soon in ~4-7% of cases -- the hunger is not fixed and the god gets angry,
         # so the character usually starves or dies while fainting (a common cause of early deaths); keeping
@@ -2628,9 +2624,16 @@ class Agent:
     @utils.debug_log('were_unload')
     @Strategy.wrap
     def were_unload(self):
-        """Restore eating access for a hungry overloaded form; actual load is authoritative."""
-        if (not jf_config.LYCAN_FIXES or not self.character.prop.polymorph or
-                self.blstats.carrying_capacity < 4 or self.blstats.hunger_state < Hunger.WEAK):
+        """In a were form, drop what the form can't carry so we can eat (LYCAN_FIXES).
+
+        polyself.c polymon() keeps the form for rn1(500, 500) turns unless its HP runs out, and weight_cap()
+        scales with the form's corpse weight: a wererat (cwt 40) carries ~27, so the whole pack Overloads
+        it ('You can't even move a handspan with this load!') and eat.c refuses to eat above Strained ('You
+        can't do that while carrying so much stuff'). Public s4 (5 food items) and jf16 s11 starved that
+        way. arrange_items() is off while polymorphed, so nothing is picked up again until we change back;
+        then the usual pickup logic collects the pile."""
+        if not jf_config.LYCAN_FIXES or not self.character.prop.polymorph or \
+                self.blstats.carrying_capacity < 4 or self.blstats.hunger_state < Hunger.WEAK:
             yield False
         food = self.edible_carried_food()
         if not food:
@@ -2640,53 +2643,11 @@ class Agent:
                    if id(item) not in keep and item.can_be_dropped_from_inventory() and
                    item.category != nh.COIN_CLASS and
                    not (item.is_container() and any(id(i) in keep for i in flatten_items([item])))]
-        coins = [item for item in self.inventory.items if item.category == nh.COIN_CLASS and
-                 item.can_be_dropped_from_inventory()]
-        # Only a known, immediately accessible non-tin meal licenses shedding surplus food.
-        def meal_now():
-            return [item for item in self.edible_carried_food() if item in self.inventory.items and
-                    item.is_unambiguous() and not item.is_corpse() and item.object.name != 'tin' and
-                    getattr(item.object, 'nutrition', 0) > 0]
-        meals = meal_now()
-        surplus = bool(meals) and any(item.count > (1 if item is meals[0] else 0)
-                                     for item in food if item in self.inventory.items and
-                                     item.can_be_dropped_from_inventory())
-        if not to_drop and not coins and not surplus:
+        if not to_drop:
             yield False
         yield True
-        initial_load = int(self.blstats.carrying_capacity)
-        if to_drop:
-            self.inventory.drop(to_drop, smart=False)
-        # drop() updates the inventory and public blstats. Never use pre-drop Item references.
-        if not self.character.prop.polymorph or self.blstats.carrying_capacity < 4:
-            return
-        coins = [item for item in self.inventory.items if item.category == nh.COIN_CLASS and
-                 item.can_be_dropped_from_inventory()]
-        if coins:
-            self.inventory.drop(coins, smart=False)
-        if not self.character.prop.polymorph or self.blstats.carrying_capacity < 4:
-            return
-        meals = meal_now()
-        if meals:
-            # Prefer nutrition per unit of carried weight; retain one whole accessible meal.
-            meal = max(meals, key=lambda item: (item.object.nutrition / max(1, item.unit_weight()),
-                                               item.object.nutrition, -item.unit_weight()))
-            food = self.edible_carried_food()
-            excess = [(item, item.count - (1 if item is meal else 0)) for item in self.inventory.items
-                      if item in food and item.can_be_dropped_from_inventory()]
-            excess = [(item, count) for item, count in excess if count > 0]
-            if excess:
-                self.inventory.drop([item for item, _ in excess],
-                                    counts=[count for _, count in excess], smart=False)
-        # This is observed burden, not proof of a meal. Existing eating/prayer paths resume.
-        try:
-            if getattr(self, '_were_food_recovery_records', 0) < 8:
-                self._were_food_recovery_records = getattr(self, '_were_food_recovery_records', 0) + 1
-                self.log(f'WERE_FOOD_LOAD before={initial_load} after={int(self.blstats.carrying_capacity)} '
-                         f'eat_load_allowed={self.blstats.carrying_capacity < 4}')
-        except Exception:
-            pass
-
+        self.log(f'LYCAN were form Overloaded while hungry: dropping {len(to_drop)} items to eat')
+        self.inventory.drop(to_drop, smart=False)
 
     _TIN_SMELL = re.compile(r'It smells like (?:the )?([A-Za-z -]+?)\.')
     _BAD_TIN_WORDS = ('cockatrice', 'chickatrice', 'Medusa', 'green slime', 'were', 'little dog', 'large dog',

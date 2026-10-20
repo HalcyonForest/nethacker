@@ -812,7 +812,7 @@ class Inventory:
             else:
                 self.agent.step(A.Command.EAT)
             if item in self.items.all_items:
-                while re.search('There (is|are)[a-zA-Z0-9- ]* here; eat (it|one)\?', self.agent.message):
+                while re.search('There (is|are)[^\n]* here; eat (it|one)\?', self.agent.message):
                     self.agent.type_text('n')
                 self.agent.type_text(letter)
                 return True
@@ -880,7 +880,18 @@ class Inventory:
         if any(l.equipped and l.status == Item.CURSED for l in launchers):
             launchers = [l for l in launchers if l.equipped]
 
+        # Keep a practically removable melee weapon rather than gambling on a
+        # new raw-unknown launcher. Existing status is not proof of known BUC.
+        main = self.items.main_hand
+        preserve_melee = (main is not None and main.equipped and
+                          main.status in (Item.UNCURSED, Item.BLESSED) and
+                          main.is_weapon() and not main.is_launcher() and
+                          not main.is_fired_projectile() and
+                          main.objs[0].name not in ('dart', 'shuriken'))
         for launcher in launchers:
+            if (preserve_melee and not launcher.equipped and
+                    getattr(launcher, 'original_buc_status', launcher.status) == Item.UNKNOWN):
+                continue
             for ammo in ammo_list + additional_ammo:
                 if ammo.is_fired_projectile(launcher):
                     if launcher.status in [Item.UNCURSED, Item.BLESSED] or \
