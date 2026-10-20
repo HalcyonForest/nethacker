@@ -1,9 +1,8 @@
 {
   "schema": "nethackers.solution/v1",
-  "name": "valkyrie-feed-attacking-pet-v2",
+  "name": "HalcyonForest-smart-development-v77",
   "root": ".",
   "parents": [
-    "github.com/daglar-dragomirov/nethacker@b3eb37bea12a2fad6cc7e9bc423bd95bf0657355",
     "github.com/zarutskiysy/nethack@9c1cc902b6d9d88e6a14e0c9e5dc7494d9882bcd",
     "github.com/zarutskiysy/nethack@00cf417f05ec9c20846b848cd70243af67695c54",
     "github.com/zarutskiysy/nethack@14a3bbd871061d63bda57da6c82af91f46959d21",
@@ -18,11 +17,9 @@
     "github.com/daglar-dragomirov/nethacker@d8da1f72c197a54ac66d69466eee32f7bc4e72d9",
     "github.com/DT6A/nethacker@ad7a864d9385f84c9b4f9865bb68141c90ca5e1b",
     "github.com/zarutskiysy/nethack@96ef3261bd61e151858b181be95b066bbde9d6f4",
-    "github.com/daglar-dragomirov/nethacker@bb5e97bcbc5b55a4dbd4a4c12cf06ac003ea5967",
-    "github.com/daglar-dragomirov/nethacker@07dddd9ebbb7ff8b64c33afb830eb5fcc8394977",
-    "github.com/daglar-dragomirov/nethacker@11376cd5708ee30655f24b580e401040a3247abe",
+    "github.com/daglar-dragomirov/nethacker@0f440af6655ce126183a753ec6ff0f2aa1e68daf",
     "github.com/daglar-dragomirov/nethacker@cc23cb3c053e5424e674067b868f86b90ab8a2a8",
-    "github.com/daglar-dragomirov/nethacker@ea136d0d2bed824b4a22d024baefe463ec1ac666"
+    "github.com/DT6A/nethacker@cfc97b826ad6dee10f29fa2b6093aaf7748715d0"
   ],
   "influences": [
     "github.com/CleverShovel/nethacker@0d1fb22498024cdcac06be9d15d0f70e8cae803c",
@@ -61,7 +58,8 @@
     "github.com/vlomshakov/nethacker@21db872529ff794a3daf14174f20fe92b2a2b2cf",
     "github.com/vlomshakov/nethacker@3488fcf091486bd983eec338c4cfefd395f1d496",
     "github.com/vlomshakov/nethacker@8b492ce95e6988b0eae2de84aef1379f885a1306",
-    "github.com/vlomshakov/nethacker@9ef4063cf36fa1d26416d11e83ef7fb1575e9ada"
+    "github.com/vlomshakov/nethacker@9ef4063cf36fa1d26416d11e83ef7fb1575e9ada",
+    "github.com/vkurenkov/nethacker@069aea065c26e8665a794b8d8ebb11ed05234b9a"
   ],
   "entrypoint": "bot.py"
 }

@@ -1005,7 +1005,7 @@ class Agent:
             self.stats_logger.log_event('container_untrap_fail')
             return self.message
 
-    def is_safe_to_pray(self, limit=500, certain_death=False):
+    def is_safe_to_pray(self, limit=500, certain_death=False, first_turn=None):
         # pray.c: 'Since you are in Gehennom, Tyr can't help you' -- nothing is fixed, and unless the alignment
         # record is high the god gets angry (angrygods) -- so no prayer at all there, not even for certain death
         if jf_config.GEHENNOM_DIVE and self.current_level().dungeon_number == 1:
@@ -1023,7 +1023,8 @@ class Agent:
                 self.blstats.time - self.last_prayer_turn < self.PRAYER_FAILURE_WAIT:
             return False
         return (
-                (self.last_prayer_turn is None and self.blstats.time > (100 if jf_config.EXACT_PRAYER else 300)) or
+                (self.last_prayer_turn is None and self.blstats.time > (
+                    first_turn if first_turn is not None else 100 if jf_config.EXACT_PRAYER else 300)) or
                 (self.last_prayer_turn is not None and self.blstats.time - self.last_prayer_turn > limit)
         )
 
@@ -2044,6 +2045,11 @@ class Agent:
             assert self.inventory.engraving_below_me.lower() != 'elbereth'
             self.engrave("Elbereth")
             return wait_counter
+        elif best_action[0] == 'hold':
+            # jf_config.CHOKEPOINT_FIGHT: wait on a corridor/door square for an approaching pack
+            self._choke_holds = getattr(self, '_choke_holds', 0) + 1
+            self.search()
+            return wait_counter
         elif best_action[0] == 'wait':
             assert self.inventory.engraving_below_me.lower() == 'elbereth'
             self.stats_logger.log_event('wait_in_fight')
@@ -2414,7 +2420,8 @@ class Agent:
         if poly_buffer:
             low_hp = False
         if (
-                (self.is_safe_to_pray(500) and low_hp)
+                (self.is_safe_to_pray(500, first_turn=jf_config.LOWHP_FIRST_TURN if jf_config.LOWHP_EXACT else None)
+                 and low_hp)
                 or self.fainting_prayer_due()
                 or self.threat_prayer_due()
                 or (not self.prayer_failed and self.blstats.hunger_state >= Hunger.WEAK and
@@ -2454,7 +2461,10 @@ class Agent:
                 engraving = (self.inventory.engraving_below_me or '').lower()
                 if not any(dive._ignores_elbereth(m[3]) for m in close) and not self.character.prop.blind and \
                         (engraving == 'elbereth' or self.can_engrave()):
-                    adjacent = []
+                    if dive._recent_rest_shelter_failure():
+                        dive._log_rest_shelter_rejection('last_resort_trust')
+                    else:
+                        adjacent = []
             if adjacent:
                 level = self.current_level()
                 here = level.objects[y, x]

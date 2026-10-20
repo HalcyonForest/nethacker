@@ -184,34 +184,7 @@ def unseen_pet_may_be_at(agent, y, x):
     return False
 
 
-def ranged_choice(agent, dy, dx, monsters):
-    if dy not in (-1, 0, 1) or dx not in (-1, 0, 1) or (dy == 0 and dx == 0):
-        return None
-    best = None
-    best_key = None
-    for launcher, ammo in agent.inventory.ranged_combinations_for_action():
-        result = _ranged_priority_for_pair(agent, dy, dx, monsters, launcher, ammo)
-        if result is None:
-            continue
-        hit, damage = agent.character.get_ranged_bonus(launcher, ammo)
-        key = (result[0], utils.calc_dps(hit, damage))
-        if best is None or key > best_key:
-            best = result + (launcher, ammo)
-            best_key = key
-    return best
-
-
 def ranged_priority(agent, dy, dx, monsters):
-    choice = ranged_choice(agent, dy, dx, monsters)
-    return None if choice is None else choice[:4]
-
-
-def ranged_selected_pair_valid(agent, dy, dx, launcher, ammo, monsters):
-    return ((launcher, ammo) in agent.inventory.ranged_combinations_for_action()
-            and _ranged_priority_for_pair(agent, dy, dx, monsters, launcher, ammo) is not None)
-
-
-def _ranged_priority_for_pair(agent, dy, dx, monsters, launcher, ammo):
     if missiles_risk_the_watch(agent):
         return None
     ret = 11
@@ -226,6 +199,7 @@ def _ranged_priority_for_pair(agent, dy, dx, monsters, launcher, ammo):
     if closest_mon_dis == 1:
         ret -= 11
 
+    launcher, ammo = agent.inventory.get_best_ranged_set()
     if ammo is None:
         return None
 
@@ -344,7 +318,6 @@ def _simulate_wand_path(agent, wand, monsters, y, x, dy, dx, range_left, hit_tar
         hit_targets[(y, x, monster)] += probability * next_prob
 
         _simulate_wand_path(agent, wand, monsters, y, x, dy, dx, branch_range - 1, hit_targets, probability * next_prob)
-
 
 
 def simulate_wand_path(agent, wand, monsters, dy, dx):
@@ -562,13 +535,13 @@ def get_available_actions(agent, monsters):
     # ranged attack actions
     for dy, dx in product([-1, 0, 1], [-1, 0, 1]):
         if dy != 0 or dx != 0:
-            ranged_pr = ranged_choice(agent, dy, dx, monsters)
+            ranged_pr = ranged_priority(agent, dy, dx, monsters)
             if ranged_pr is not None:
-                pri, y, x, monster, launcher, ammo = ranged_pr
+                pri, y, x, monster = ranged_pr
                 pri += elbereth_attack_penalty(agent, monsters, monster)
                 if all(monster[3].mname in ONLY_RANGED_SLOW_MONSTERS for monster in monsters):
                     pri += 10
-                actions.append((pri, ('ranged', dy, dx, launcher, ammo)))
+                actions.append((pri, ('ranged', dy, dx)))
 
             actions.extend(get_potential_wand_usages(agent, monsters, dy, dx))
 
@@ -626,7 +599,6 @@ def _fb_castable(agent):
                     not (jf_config.FB_SANITY and _fb_cannot_cast(agent)))
     except Exception:
         return False
-
 
 
 def _fb_cannot_cast(agent):
@@ -755,7 +727,6 @@ def force_bolt_actions(agent, monsters):
         if best is None or priority > best[0]:
             best = (priority, ('force_bolt', sy, sx))
     return [best] if best is not None else []
-
 
 
 def decide_what_to_pickup(agent):

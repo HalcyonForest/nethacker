@@ -121,6 +121,27 @@ class ItemPriority(ItemPriorityBase):
                         (item.is_launcher() or item.is_fired_projectile()):
                     add_item(item)
 
+        # hypothesis: wands come only after darts, food and the unknown bulk in this split, so a Tourist whose
+        # pack is near its (low) capacity drops them in the Dlvl 1-4 grind or never picks them up. Gnomes, gnome
+        # lords, hobbits, kobolds and orcs of the grind pick floor wands up and zap them at the AC 10 Tourist
+        # (muse.c find_offensive/use_offensive: striking, magic missile, sleep, fire, cold, lightning, death), and
+        # a wand left behind is also one fewer answer for our own fights (fight_heur.get_potential_wand_usages,
+        # the last-resort zap). A wand weighs 7: during the tour keep every wand before the bulk, so none is left
+        # lying about for them (the dive keeps its own food/passage order). Fewer grind and dive-start losses.
+        # Node #53: port of node #6 onto the darts+LOWHP_EXACT+DIVE_PRAYER_READY chain (#6: held-out 0.1792 ->
+        # 0.1873; #16 = darts+wands+DIVE_PRAYER_READY: 0.2200, vs 0.2112 without the wands).
+        # sources: https://nethackwiki.com/wiki/Gnome_With_the_Wand_of_Death ("pick up any unknown wands you find
+        #          on the floor"; hobbits, goblins, kobolds zap them), https://nethackwiki.com/wiki/Wand,
+        #          https://nethackwiki.com/wiki/Forum:What's_your_unluckiest_death%3F (players killed on Dlvl 1-2 by a
+        #          gnome/goblin with a picked-up wand), https://nethackwiki.com/wiki/Tourist,
+        #          https://groups.google.com/g/rec.games.roguelike.nethack/c/5gcIf1WbGYY (engrave-ID wands early),
+        #          NetHack 3.6.6 src/muse.c find_offensive, /refs/history/6.diff, /refs/history/16.diff,
+        #          /refs/past_runs/20261008-132537/13.diff and 38.diff (kept twice on held-out seeds)
+        if jf_config.KEEP_WANDS_FIRST and not (dive is not None and dive.diving):
+            for item in sorted(filter(lambda i: i.category == nh.WAND_CLASS, items),
+                               key=lambda i: i.unit_weight(with_content=False)):
+                add_item(item)
+
         if self.agent.character.alignment == Character.LAWFUL:
             for item in sorted(filter(lambda i: i.objs[0].name == 'long sword', items),
                                key=lambda i: -utils.calc_dps(*self.agent.character.get_melee_bonus(i))):
@@ -874,6 +895,156 @@ class GlobalLogic:
         yield True
         dive.read_mapping()
 
+    @Strategy.wrap
+    def safe_tile_development(self):
+        stats = self.agent.blstats
+        if (not self.dive.diving or stats.hitpoints * 3 < stats.max_hitpoints * 2 or
+                stats.hunger_state >= Hunger.WEAK or self.agent.get_visible_monsters()):
+            yield False
+            return
+        inventory = self.agent.inventory
+        carried = list(inventory.items)
+        floor = [item for item in inventory.items_below_me
+                 if item.shop_status == Item.NOT_SHOP and item.is_armor()]
+        _, carried_ac = inventory.get_best_armorset(carried, return_ac=True)
+        best, best_ac = inventory.get_best_armorset(carried + floor, return_ac=True)
+        tool = self.dive.digging_tool()
+        skip_slots = (O.ARM_SHIELD,) if tool is not None and tool.objs[0].bi else ()
+        floor_upgrade = False
+        pickup_target = None
+        plan = None
+        if not self.agent.hands_welded():
+            for slot, name in ((O.ARM_SHIELD, 'off_hand'), (O.ARM_HELM, 'helm'),
+                               (O.ARM_GLOVES, 'gloves'), (O.ARM_BOOTS, 'boots'),
+                               (O.ARM_SHIRT, 'shirt'), (O.ARM_SUIT, 'suit'), (O.ARM_CLOAK, 'cloak')):
+                if slot in skip_slots:
+                    continue
+                target = best[slot]
+                current = getattr(inventory.items, name)
+                if (target is None or target not in floor or
+                        best_ac[slot] >= (0 if carried_ac[slot] is None else carried_ac[slot])):
+                    continue
+                if current is not None and current.status == Item.CURSED:
+                    continue
+                hand = inventory.items.main_hand
+                if slot == O.ARM_SHIELD and hand is not None and hand.objs[0].bi:
+                    continue
+                if slot == O.ARM_GLOVES and hand is not None and hand.status == Item.CURSED:
+                    continue
+                if (slot in (O.ARM_SHIRT, O.ARM_SUIT) and inventory.items.cloak is not None and
+                        inventory.items.cloak.status == Item.CURSED):
+                    continue
+                if (slot == O.ARM_SHIRT and inventory.items.suit is not None and
+                        inventory.items.suit.status == Item.CURSED):
+                    continue
+                floor_upgrade = True
+                pickup_target = target
+                break
+        if floor_upgrade:
+            try:
+                # Match arrange_items eligibility and order; this is a prediction only.
+                if jf_config.CONTAINER_LOOP_FIX and inventory._here() in inventory.multi_container_squares:
+                    below = list(inventory.items_below_me)
+                else:
+                    below = flatten_items(inventory.items_below_me)
+                eligible = [item for item in below if item.shop_status == Item.NOT_SHOP and not inventory.dropped_here(item)]
+                forced = [item for item in flatten_items(inventory.items) if not inventory._droppable(item)]
+                free = [item for item in flatten_items(sorted(inventory.items, key=lambda item: item.text)) if inventory._droppable(item)]
+                candidates = free + eligible
+                split = self.item_priority.split(candidates, forced, self.agent.character.carrying_capacity)
+                def retained(item):
+                    if item in forced:
+                        return item.count
+                    if item not in candidates:
+                        return 0
+                    index = candidates.index(item)
+                    return sum(counts[index] for counts in split.values())
+                edible = list(self.agent.edible_carried_food())
+                def nutrition(item):
+                    return getattr(item.object, 'nutrition', 0) if item.is_unambiguous() else 0
+                current_food = sum(nutrition(item) * item.count for item in edible)
+                retained_food = sum(nutrition(item) * retained(item) for item in edible)
+                protected = [item for item in flatten_items(inventory.items) if
+                    item.category in (nh.POTION_CLASS, nh.WAND_CLASS) or
+                    (item.category == nh.SCROLL_CLASS and item.is_unambiguous() and item.object.name == 'magic mapping')]
+                losses = [dict(text=str(item.text)[:256], before=int(item.count), retained=int(retained(item)))
+                          for item in protected if retained(item) < item.count]
+                target_count = retained(pickup_target)
+                floor_upgrade = target_count > 0 and retained_food >= min(900, current_food) and not losses
+                plan = dict(schema='armor-resource-plan-v1', predicted=True, allowed=bool(floor_upgrade),
+                    target=str(pickup_target.text)[:256], target_retained=int(target_count),
+                    current_food=int(current_food), retained_food=int(retained_food),
+                    food_floor=int(min(900, current_food)), protected_losses=losses[:64])
+            except Exception as error:
+                floor_upgrade = False
+                plan = dict(schema='armor-resource-plan-v1', predicted=True, allowed=False, error=type(error).__name__)
+            try:
+                count = getattr(self, '_armor_resource_log_count', 0)
+                if count < 64:
+                    self._armor_resource_log_count = count + 1
+                    import json
+                    self.agent.log('ARMOR_RESOURCE_PLAN ' + json.dumps(plan, sort_keys=True, separators=(',', ':')))
+            except Exception:
+                pass
+        selected = inventory.wear_best_stuff(skip_slots=skip_slots)
+        if floor_upgrade:
+            selected = inventory.pickup_and_drop_items().before(selected)
+        delegated = selected.strategy()
+        if not next(delegated):
+            yield False
+            return
+        yield True
+
+        def observe(phase):
+            try:
+                count = getattr(self, '_safe_development_log_count', 0)
+                if count >= 64:
+                    return
+                self._safe_development_log_count = count + 1
+                import json
+                current = self.agent.blstats
+                items = self.agent.inventory.items
+                equipped = {}
+                for slot in ('main_hand', 'off_hand', 'helm', 'gloves', 'boots', 'shirt', 'suit', 'cloak'):
+                    item = getattr(items, slot)
+                    equipped[slot] = None if item is None else dict(text=str(item.text)[:512], equipped=bool(item.equipped))
+                current_floor = list(self.agent.inventory.items_below_me)
+                current_carried = list(items)
+                rows = []
+                # Bound total rows; preserve counts so omitted entries are explicit.
+                for location, collection in (('floor', current_floor), ('inventory', current_carried)):
+                    for item in collection:
+                        if len(rows) >= 128:
+                            break
+                        rows.append(dict(location=location, text=str(item.text)[:512], count=int(item.count)))
+                payload = dict(schema='armor-resource-observed-v1', plan=plan, phase=phase, turn=int(current.time),
+                    xl=int(current.experience_level), xp=int(current.experience_points),
+                    hp=int(current.hitpoints), max_hp=int(current.max_hitpoints),
+                    ac=int(current.armor_class), hunger=int(current.hunger_state),
+                    floor_items=len(current_floor), inventory_items=len(current_carried),
+                    equipment=equipped, items=rows)
+                while True:
+                    payload['omitted_rows'] = len(current_floor) + len(current_carried) - len(rows)
+                    message = 'SAFE_DEVELOPMENT ' + json.dumps(payload, sort_keys=True, separators=(',', ':'))
+                    if len(message.encode('utf-8')) <= 65536:
+                        break
+                    if not rows:
+                        return
+                    rows.pop()
+                self.agent.log(message)
+            except Exception:
+                pass
+
+        observe('before')
+        try:
+            next(delegated)
+            assert False, 'inventory strategy yielded twice'
+        except StopIteration:
+            pass
+        finally:
+            # Observed state only: an attempted pickup/wear is not proof of completion.
+            observe('after')
+
     def global_strategy(self):
         return (
             self.current_strategy().repeat()
@@ -896,6 +1067,9 @@ class GlobalLogic:
             ])
             .preempt(self.agent, [
                 self.wait_out_unexpected_state_strategy(),
+            ])
+            .preempt(self.agent, [
+                self.safe_tile_development(),
             ])
             .preempt(self.agent, [
                 self.agent.cure_disease().every(5),

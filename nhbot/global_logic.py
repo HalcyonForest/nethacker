@@ -21,7 +21,6 @@ from . import power_route
 from .character import Character
 from .dive_logic import DiveLogic
 from .kni_steed import SteedKeeper
-from .pet_feeder import HungryPetFeeder
 from .exceptions import AgentPanic
 from .glyph import Hunger, G, MON
 from .item import Item, flatten_items
@@ -292,7 +291,6 @@ class GlobalLogic:
         self.known = known_items.KnownItemsGuard(self.dive, self.mino)   # jf_config.KNOWN_ITEMS (dive-audit)
         # Knight only (kni_steed.py): feed the saddled pony so hunger never turns it on us
         self.steed = SteedKeeper(agent)
-        self.pet_feeder = HungryPetFeeder(agent)
 
     def update(self):
         self.dive.update()
@@ -1050,9 +1048,6 @@ class GlobalLogic:
             ])
             .preempt(self.agent, [
                 self.agent.fight2(),
-            ])
-            .preempt(self.agent, [
-                self.pet_feeder.strategy(),
             ])
             # Knight only: throw the kit's apples/carrots to the pony before hunger confuses it into
             # attacking us (dogmove.c dog_hunger / mfndpos ALLOW_U); no-op for every other role

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-import json
 import os
 import tempfile
 from pathlib import Path
@@ -13,12 +12,132 @@ os.environ.setdefault("NUMBA_CACHE_DIR", str(_cache_root / "numba"))
 
 import roles  # noqa: E402
 
-# One modern main engine for all67 non-Healer/Samurai identities.
-# Preserve the parent six Healer/Samurai specialist routes exactly.
-SPECIALISTS = {'hea-gno-neu-fem': 'adapter_pf_vlom_9ef4063', 'hea-gno-neu-mal': 'adapter_pf_vlom_9ef4063', 'hea-hum-neu-fem': 'adapter_pf_hh', 'hea-hum-neu-mal': 'adapter_pf_vlom_8b492ce', 'sam-hum-law-fem': 'adapter_pf_v37', 'sam-hum-law-mal': 'adapter_pf_vk_s25'}
+# identity prefix -> specialist engine adapter (from daglar-dragomirov/nethacker@e29eb82, chosen there on held-out
+# games): Healers on vlomshakov's engines, Samurai on daglar's v35. Every other identity plays the main engine, nhbot.
+# Human Priests left PetrAnokhin's pf_pa for nhbot (eL1fe's spell bundle casts their healing): +0.053 +- 0.022 per game
+# over 113 paired held-out games (ph0/ph1), in line with the hub's private seeds (dag25 0.260 vs pf_pa 0.228).
+# v9p (private-safe): only routes that beat nhbot on the hub's VERIFIED (private-seed) tier; the public-seed-selected
+# ports of v6/v7 overfit and are left out, and Tourists are back on nhbot (pf_dtad7a: 0.127 verified vs nhbot ~0.15).
+# v10a: Healers and Samurai back on nhbot -- every Healer/Samurai specialist lost to nhbot on 90 DEV held-out seeds
+# (hea-gno pf_hg -0.050, hea-hum pf_hh -0.024, sam pf_v35 -0.051, pf_v37 -0.111); pre-probe hub runs of hea-gno on nhbot
+# scored 0.24-0.27 verified vs pf_hg 0.160.
+SPECIALISTS = {
+    "arc-gno": "adapter_pf_v36",              # verified 0.405 vs nhbot 0.356
+    "ran-hum-neu": "adapter_pf_s25p8",        # verified 0.31 vs nhbot 0.21-0.25
+    "ran-elf-cha-fem": "adapter_pf_s25p8",    # verified 0.356 vs nhbot 0.325
+    "kni": "adapter_pf_s25p8",                # verified 0.209/0.247 vs nhbot 0.144/0.144
+    # v9p2: the e29-family engines beat four verified runs of nhbot here as well (one verified sample each)
+    "arc-hum-neu": "adapter_pf_s25p8",        # e29/pf_s25p 0.360/0.380 vs nhbot 0.31-0.33
+    "bar-orc": "adapter_pf_s25p8",            # e29/pf_s25p8 0.45-0.48 vs nhbot 0.36-0.41
+    "wiz-hum-neu": "adapter_pf_s25p8",        # dev 90 seeds: pf_s25p8 0.252 > nhbot 0.214 > pf_vk_s25 0.153; verified e29 ~0.25 vs pf_vk_s25 0.125
+    # v12pub: v11pub + v2/v3 sources (LEGACY below) + v4's config on arc-dwa-law-mal / arc-hum-law-fem (tools/mkpub12.py)
+    # v11pub (PUBLIC-board variant): per identity the best public-seed setup among v10c / v7 / v9p2 / v4 (tools/mkpub.py)
+    "arc-dwa-law-fem": "adapter_nhbot_v3",
+    "arc-dwa-law-mal": "",
+    "arc-gno-neu-fem": "adapter_pf_v36",
+    "arc-gno-neu-mal": "adapter_pf_v36",
+    "arc-hum-law-fem": "",
+    "arc-hum-law-mal": "adapter_nhbot_v3",
+    "arc-hum-neu-fem": "adapter_nhbot_v3",
+    "arc-hum-neu-mal": "adapter_nhbot_v3",
+    "bar-hum-cha-fem": "adapter_nhbot_v2",
+    "bar-hum-cha-mal": "adapter_nhbot_v2",
+    "bar-hum-neu-fem": "",
+    "bar-hum-neu-mal": "adapter_pf_vk_s25",
+    "bar-orc-cha-fem": "",
+    "bar-orc-cha-mal": "",
+    "cav-dwa-law-fem": "adapter_nhbot_v2",
+    "cav-dwa-law-mal": "adapter_nhbot_v2",
+    "cav-gno-neu-fem": "",
+    "cav-gno-neu-mal": "",
+    "cav-hum-law-fem": "adapter_nhbot_v3",
+    "cav-hum-law-mal": "adapter_nhbot_v3",
+    "cav-hum-neu-fem": "adapter_nhbot_v2",
+    "cav-hum-neu-mal": "",
+    "hea-gno-neu-fem": "adapter_pf_vlom_9ef4063",
+    "hea-gno-neu-mal": "adapter_pf_vlom_9ef4063",
+    "hea-hum-neu-fem": "adapter_pf_hh",
+    "hea-hum-neu-mal": "adapter_pf_vlom_8b492ce",
+    "kni-hum-law-fem": "adapter_pf_s25p8",
+    "kni-hum-law-mal": "adapter_pf_s25p8",
+    "mon-hum-cha-fem": "",
+    "mon-hum-cha-mal": "",
+    "mon-hum-law-fem": "adapter_nhbot_v2",
+    "mon-hum-law-mal": "adapter_nhbot_v2",
+    "mon-hum-neu-fem": "adapter_nhbot_v3",
+    "mon-hum-neu-mal": "adapter_nhbot_v3",
+    "pri-elf-cha-fem": "",
+    "pri-elf-cha-mal": "adapter_nhbot_v3",
+    "pri-hum-cha-fem": "adapter_nhbot_v3",
+    "pri-hum-cha-mal": "adapter_nhbot_v3",
+    "pri-hum-law-fem": "adapter_pf_pa",
+    "pri-hum-law-mal": "adapter_nhbot_v3",
+    "pri-hum-neu-fem": "",
+    "pri-hum-neu-mal": "",
+    "ran-elf-cha-fem": "adapter_pf_s25p8",
+    "ran-elf-cha-mal": "adapter_pf_s25p8",
+    "ran-gno-neu-fem": "",
+    "ran-gno-neu-mal": "",
+    "ran-hum-cha-fem": "",
+    "ran-hum-cha-mal": "",
+    "ran-hum-neu-fem": "adapter_pf_s25p8",
+    "ran-hum-neu-mal": "adapter_pf_s25p8",
+    "ran-orc-cha-fem": "",
+    "ran-orc-cha-mal": "",
+    "rog-hum-cha-fem": "adapter_pf_pa_5c1186c",
+    "rog-hum-cha-mal": "adapter_pf_pa_5c1186c",
+    "rog-orc-cha-fem": "",
+    "rog-orc-cha-mal": "",
+    "sam-hum-law-fem": "adapter_pf_v37",
+    "sam-hum-law-mal": "adapter_pf_vk_s25",
+    "tou-hum-neu-fem": "adapter_pf_dtad7a",
+    "tou-hum-neu-mal": "adapter_pf_dtad7a",
+    "val-dwa-law-fem": "adapter_pf_vk_s23",
+    "val-hum-law-fem": "",
+    "val-hum-neu-fem": "adapter_nhbot_v3",
+    "wiz-elf-cha-fem": "",
+    "wiz-elf-cha-mal": "",
+    "wiz-gno-neu-fem": "adapter_nhbot_v2",
+    "wiz-gno-neu-mal": "adapter_nhbot_v2",
+    "wiz-hum-cha-fem": "",
+    "wiz-hum-cha-mal": "",
+    "wiz-hum-neu-fem": "",
+    "wiz-hum-neu-mal": "",
+    "wiz-orc-cha-fem": "",
+    "wiz-orc-cha-mal": "",
+}
 
-# Uniform transfer policy disables all legacy per-identity engine choices.
-LEGACY = {}
+# v12pub (PUBLIC-board variant): identities whose best public score came from v2 (9c1cc90) or v3 (71335bf), programs
+# whose nhbot differs from today's. They play a verbatim copy of that program's nhbot (nhbot_v2 / nhbot_v3: only the
+# package name in the import lines changed) with its defaults (v2/v3 had empty OVERRIDES, so roles.apply is skipped),
+# routed exactly as that program routed them: v2/v3 had no ^X probe, so their table is applied to the identity read
+# from the first observation (role-only when the welcome line is missed -> the program's nhbot). The probe itself is
+# game-neutral (153 public episodes replay turn-for-turn with exactly 2 more steps).
+LEGACY = {
+    "arc-dwa-law-fem": "v3",
+    "arc-hum-law-mal": "v3",
+    "arc-hum-neu-fem": "v3",
+    "arc-hum-neu-mal": "v3",
+    "bar-hum-cha-fem": "v2",
+    "bar-hum-cha-mal": "v2",
+    "cav-dwa-law-fem": "v2",
+    "cav-dwa-law-mal": "v2",
+    "cav-hum-law-fem": "v3",
+    "cav-hum-law-mal": "v3",
+    "cav-hum-neu-fem": "v2",
+    "mon-hum-law-fem": "v2",
+    "mon-hum-law-mal": "v2",
+    "mon-hum-neu-fem": "v3",
+    "mon-hum-neu-mal": "v3",
+    "pri-elf-cha-mal": "v3",
+    "pri-hum-cha-fem": "v3",
+    "pri-hum-cha-mal": "v3",
+    "pri-hum-law-fem": "v2",
+    "pri-hum-law-mal": "v3",
+    "val-hum-neu-fem": "v3",
+    "wiz-gno-neu-fem": "v2",
+    "wiz-gno-neu-mal": "v2",
+}
 _LEGACY_TABLES = {
     "v2": ({"hea-gno": "adapter_pf_hg", "hea-hum": "adapter_pf_hh", "pri-hum": "adapter_pf_pa", "sam": "adapter_pf_v35"},
            "adapter_nhbot_v2"),
@@ -65,8 +184,6 @@ class Bot:
     def __init__(self) -> None:
         self._drivers = {}
         self._driver = None
-        self._trace_file = None
-        self._trace_step = 0
 
     def _get(self, module_name):
         if module_name not in self._drivers:
@@ -74,14 +191,6 @@ class Bot:
         return self._drivers[module_name]
 
     def reset(self, initial_observation):
-        trace_dir = os.environ.get("TRACE_OBS_DIR")
-        if trace_dir:
-            try:
-                Path(trace_dir).mkdir(parents=True, exist_ok=True)
-                episode = os.environ.get("JF_EPISODE", str(os.getpid()))
-                self._trace_file = open(Path(trace_dir) / f"obs_{episode}.jsonl", "w", buffering=1)
-            except OSError:
-                self._trace_file = None
         ident = None
         try:
             ident = roles.identity(initial_observation)
@@ -105,11 +214,6 @@ class Bot:
         self._driver.reset(initial_observation)
 
     def act(self, observation):
-        action = self._act(observation)
-        self._trace_observation(observation, action)
-        return action
-
-    def _act(self, observation):
         if self._probe is not None:
             import nle.nethack as nh
             from nle.nethack import actions as A
@@ -128,30 +232,9 @@ class Bot:
             self._start(observation, self._probe_ident)
         return self._driver.act(observation)
 
-    def _trace_observation(self, observation, action):
-        if self._trace_file is None:
-            return
-        try:
-            message = bytes(observation["message"]).split(b"\0", 1)[0].decode("latin-1", "replace")
-            screen = [bytes(row).decode("latin-1", "replace").rstrip("\0 ")
-                      for row in observation["tty_chars"]]
-            record = {
-                "step": self._trace_step,
-                "action": int(action),
-                "message": message,
-                "blstats": [int(x) for x in observation["blstats"]],
-                "screen": screen,
-            }
-            self._trace_file.write(json.dumps(record, ensure_ascii=False) + "\n")
-            self._trace_step += 1
-        except (OSError, KeyError, TypeError, ValueError):
-            pass
-
     def close(self):
         for driver in self._drivers.values():
             driver.close()
-        if self._trace_file is not None:
-            self._trace_file.close()
 
 
 def make_agent():

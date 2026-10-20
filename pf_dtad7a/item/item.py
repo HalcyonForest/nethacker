@@ -64,7 +64,10 @@ class Item:
                 (isinstance(self.objs[0], (O.Weapon, O.WepTool)) and self.status == Item.CURSED and self.equipped) or
                 (isinstance(self.objs[0], O.Armor) and self.equipped) or
                 (self.is_unambiguous() and self.object == O.from_name('loadstone') and self.status == Item.CURSED) or
-                (self.category == nh.BALL_CLASS and self.equipped)
+                (self.category == nh.BALL_CLASS and self.equipped) or
+                (self.equipped and self.category in (nh.AMULET_CLASS, nh.RING_CLASS, nh.TOOL_CLASS) and
+                 any(marker in (self.text or '') for marker in
+                     ('(being worn)', '(being worn; slippery)', '(on right hand)', '(on left hand)')))
         )
 
     def weight(self, with_content=True):

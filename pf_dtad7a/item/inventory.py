@@ -843,6 +843,17 @@ class Inventory:
         best_item = None
         best_dps = utils.calc_dps(*self.agent.character.get_melee_bonus(None, large_monster=False))
         for item in flatten_items(items):
+            # hypothesis: the Tourist wields its whole stack of +2 darts as its 'best melee weapon' (the +2 to-hit
+            # beats bare hands in get_melee_bonus), and get_ranged_combinations never throws the best/wielded melee
+            # weapon -- so the class's only real attack (a thrown dart: d3+2, trained toward Skilled multishot) is
+            # never used in the Dlvl 1 grind where the early losses happen (jackal, bat, wererat, gnome zombie).
+            # A missile or ammo in melee does only rnd(2) (uhitm.c hmon_hitmon), no better than unskilled bare hands
+            # (d2 +1 skill damage, weapon.c weapon_dam_bonus), so keep them out of the melee choice and throw them.
+            # sources: https://nethackwiki.com/wiki/Tourist, https://nethackwiki.com/wiki/Dart,
+            #          NetHack 3.6.6 src/uhitm.c hmon_hitmon (is_missile/is_ammo -> rnd(2)), src/weapon.c
+            if jf_config.MISSILES_NOT_MELEE and item.is_weapon() and \
+                    (item.is_fired_projectile() or item.objs[0].name in ('dart', 'shuriken')):
+                continue
             if item.is_weapon() and \
                     (item.status in [Item.UNCURSED, Item.BLESSED] or
                      (allow_unknown_status and item.status == Item.UNKNOWN)):
@@ -883,9 +894,14 @@ class Inventory:
             wielded_melee_weapon = None
             if not allow_wielded_melee:
                 wielded_melee_weapon = self.items.main_hand
+            # (WIELDED_STACK_THROW: a wielded / best-melee stack of thrown missiles is thrown one at a time --
+            # dothrow.c throw_obj splits one off and the rest stays wielded -- so it is not excluded while 2+ are
+            # left; never a cursed one: throw_obj refuses a welded weapon and the fight loop would retry it)
             valid_combinations.extend([(None, i) for i in items
                                        if i.is_thrown_projectile()
-                                       and i != best_melee_weapon and i != wielded_melee_weapon])
+                                       and ((i != best_melee_weapon and i != wielded_melee_weapon) or
+                                            (jf_config.WIELDED_STACK_THROW and i.count >= 2 and
+                                             i.status != Item.CURSED))])
 
         return valid_combinations
 
@@ -1337,7 +1353,7 @@ class Inventory:
 
     @utils.debug_log('inventory.wear_best_stuff')
     @Strategy.wrap
-    def wear_best_stuff(self):
+    def wear_best_stuff(self, skip_slots=()):
         if self.agent.hands_welded():
             yield False   # armor can't come off (or go on over it) with the hands welded
             return
@@ -1349,6 +1365,8 @@ class Inventory:
             for slot, name in [(O.ARM_SHIELD, 'off_hand'), (O.ARM_HELM, 'helm'), (O.ARM_GLOVES, 'gloves'),
                                (O.ARM_BOOTS, 'boots'), (O.ARM_SHIRT, 'shirt'), (O.ARM_SUIT, 'suit'),
                                (O.ARM_CLOAK, 'cloak')]:
+                if slot in skip_slots:
+                    continue
                 if best_armorset[slot] == getattr(self.items, name) or \
                         (getattr(self.items, name) is not None and getattr(self.items, name).status == Item.CURSED):
                     continue

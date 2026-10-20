@@ -9,7 +9,7 @@ from .. import jf_config, utils
 from ..item import Item
 from ..utils import adjacent
 from .monster_utils import is_monster_faster, is_dangerous_monster, \
-    ONLY_RANGED_SLOW_MONSTERS, EXPLODING_MONSTERS, WEAK_MONSTERS, consider_melee_only_ranged_if_hp_full
+    ONLY_RANGED_SLOW_MONSTERS, EXPLODING_MONSTERS, WEAK_MONSTERS, consider_melee_only_ranged_if_hp_full, infectious_were
 from .movement_priority import draw_monster_priority_positive, draw_monster_priority_negative
 from .utils import wielding_ranged_weapon, line_dis_from, inside
 
@@ -36,7 +36,7 @@ def melee_monster_priority(agent, monsters, monster):
         ret -= 6
     if mon.mname in EXPLODING_MONSTERS:
         ret -= 17
-    if 'were' in mon.mname:
+    if 'were' in mon.mname and not infectious_were(agent, mon):
         ret += 1
     # if not wielding_melee_weapon(agent):
     #     ret -= 5
@@ -75,6 +75,63 @@ def missiles_risk_the_watch(agent):
     if gl.minetown_level is not None and agent.current_level().key() == gl.minetown_level:
         return True
     return utils.any_in(agent.glyphs, WATCH_GLYPHS)
+
+
+# hypothesis: with its darts no longer wielded (MISSILES_NOT_MELEE), the Tourist punches every monster that reaches
+# melee (bare hands, unskilled: to-hit +1, d2+1), because ranged_priority gives an adjacent target -11 against
+# melee's 16. A +2 dart thrown point blank is far better (dothrow.c thitmonst: +2 for a throwing weapon, +(3 - distance)
+# = +2 at distance 1, +2 enchantment; d3+2 damage) and trains the dart skill toward Skilled/Expert multishot -- so the
+# Dlvl 1-4 grind fights (jackals, coyotes, bats, rats, hill orcs, were-creatures) end in fewer rounds, i.e. less HP
+# lost. A thrown missile also avoids the target's passive attack. As nhbot's Ranger point-blank archery: one above
+# what melee would get (so the HP <= 8 retreat ordering is kept); weak / ranged-only / exploding kinds keep their
+# old handling (darts break 1 in 4 on a hit, dothrow.c; lichens and newts are punched).
+# sources: https://nethackwiki.com/wiki/Tourist , https://nethackwiki.com/wiki/Dart ,
+#          https://nethackwiki.com/wiki/Ranged_attack (thrown attacks skip passives at melee range),
+#          rec.games.roguelike.nethack "it took me 4 years to understand" (Expert dart/dagger: throw them at melee
+#          range), nhbot/combat/fight_heur.py ranger_point_blank (this repo), NetHack 3.6.6 src/dothrow.c thitmonst
+# node #2 (tree round 1): port of past run 20261008-132537 #22 (MISSILES_NOT_MELEE + POINT_BLANK_THROW, kept there
+# on several chains with held-out gains of +0.04..+0.09) onto this root, whose Tourists still wield the dart stack.
+# Aimed at the Dlvl 1-4 grind deaths that dominate the dev/held-out seeds (jackal, kobold, sewer rat, wererat, rothe,
+# hill orc, imp at XL 1-8).
+# sources (#2): /refs/past_runs/20261008-132537/22.diff (+ 26/34/63.diff), https://nethackwiki.com/wiki/Tourist
+#          ("usually better to kill things by throwing your darts in the early stages"), https://nethackwiki.com/wiki/Dart
+#          ("ineffective in melee, and must be used by throwing"), https://nethackwiki.com/wiki/Standard_strategy,
+#          http://crpgaddict.blogspot.com/2012/06/nethack-from-beginning.html (players: "USE YOUR DARTS"),
+#          https://forums.giantitp.com/archive/index.php/t-295017.html, https://nethackwiki.com/wiki/Jackal
+POINT_BLANK_THROW = True
+
+
+def point_blank_throw(agent, launcher, ammo):
+    """A bare-handed, non-martial character whose best ranged set is hand-thrown (the Tourist's darts)."""
+    try:
+        ch = agent.character
+        if not POINT_BLANK_THROW or launcher is not None or ammo is None or ch.prop.polymorph or \
+                ch.role in (ch.MONK, ch.SAMURAI) or not ammo.is_thrown_projectile():
+            return False
+        main = agent.inventory.items.main_hand
+        # nothing to hit with in hand: bare, or a missile / ammo / launcher (rnd(2) in melee, uhitm.c hmon_hitmon)
+        return main is None or not main.is_weapon() or main.is_launcher() or main.is_fired_projectile() or \
+            main.objs[0].name in ('dart', 'shuriken')
+    except Exception:
+        return False
+
+
+def point_blank_priority(agent, monster, default):
+    """One above melee_monster_priority for the same monster, bare-handed (16, or 1 at HP <= 8 against a
+    monster that isn't faster: the retreat keeps winning there)."""
+    try:
+        _, _, _, mon, _ = monster
+        if mon.mname in WEAK_MONSTERS or mon.mname in ONLY_RANGED_SLOW_MONSTERS or \
+                mon.mname in EXPLODING_MONSTERS:
+            return default
+        ret = 2
+        if agent.blstats.hitpoints > 8 or is_monster_faster(agent, monster):
+            ret += 15
+        if 'were' in mon.mname:
+            ret += 1
+        return ret
+    except Exception:
+        return default
 
 
 def ranged_priority(agent, dy, dx, monsters):
@@ -142,6 +199,8 @@ def ranged_priority(agent, dy, dx, monsters):
                 if agent.glyphs[by, bx] in G.PETS or \
                         (agent.glyphs[by, bx] in G.MONS and not any(m[1] == by and m[2] == bx for m in monsters)):
                     return None
+            if dis == 1 and point_blank_throw(agent, launcher, ammo):
+                ret = point_blank_priority(agent, monster[0], ret)
             return ret, y, x, monster[0]
 
 
@@ -262,6 +321,19 @@ def in_gehennom(agent):
     return jf_config.GEHENNOM_DIVE and agent.current_level().dungeon_number == 1
 
 
+def were_keep_away(agent, monsters, radius=1):
+    """WERE_KEEP_AWAY: a were in animal form within `radius` whose bite can still give us lycanthropy, and
+    nothing adjacent that would melee through an Elbereth (an @ were, a minotaur) -- hide from it on Elbereth."""
+    if not jf_config.WERE_KEEP_AWAY or in_gehennom(agent):
+        return False
+    y0, x0 = agent.blstats.y, agent.blstats.x
+    dive = agent.global_logic.dive
+    if any(adjacent((my, mx), (y0, x0)) and dive._melee_ignores_elbereth(mon) for _, my, mx, mon, _ in monsters):
+        return False
+    return any(max(abs(my - y0), abs(mx - x0)) <= radius and infectious_were(agent, mon)
+               for _, my, mx, mon, _ in monsters)
+
+
 def elbereth_action(agent, monsters):
     if agent.inventory.engraving_below_me.lower() == 'elbereth':
         return []
@@ -269,6 +341,9 @@ def elbereth_action(agent, monsters):
         return []
     if not agent.can_engrave():
         return []
+    if were_keep_away(agent, monsters):
+        # before any melee (~17) or pickup: a were that just stepped next to us has not bitten yet
+        return [(40, ('elbereth',))]
     adj_monsters_count = 0
     for monster in monsters:
         _, my, mx, mon, _ = monster
@@ -296,6 +371,9 @@ def wait_action(agent, monsters):
     if agent.inventory.engraving_below_me.lower() == 'elbereth' and not in_gehennom(agent):
         player_hp_ratio = agent.blstats.hitpoints / agent.blstats.max_hitpoints
         priority = 30 - player_hp_ratio * 40
+        if were_keep_away(agent, monsters, radius=2):
+            # stay on the square while it circles (stepping off to chase it hands it the first bite)
+            priority = max(priority, 20)
         return [(priority, ('wait',))]
     return []
 
@@ -501,6 +579,27 @@ def get_corridors_priority_map(walkable):
     return corridor_mask + corridor_dilated >= 1
 
 
+def _chokepoint_group(agent, monsters):
+    """CHOKEPOINT_FIGHT: 2+ mobile non-weak hostiles within 7 squares (a pack: hill orcs, jackals, rothes)."""
+    bl = agent.blstats
+    group = [m for m in monsters if m[3].mname not in WEAK_MONSTERS and m[3].mname not in ONLY_RANGED_SLOW_MONSTERS
+             and m[3].mmove > 0 and max(abs(m[1] - bl.y), abs(m[2] - bl.x)) <= 7]
+    return len(group) >= 2
+
+
+def chokepoint_mask(agent, walkable):
+    """Walkable squares a monster can reach us on from at most 2 squares: corridors (also the square in front of
+    a door) and open doors, which nothing enters or leaves diagonally."""
+    w = walkable.astype(int)
+    k8 = np.ones((3, 3), dtype=int)
+    k8[1, 1] = 0
+    k4 = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
+    n8 = signal.convolve2d(w, k8, boundary='fill', mode='same')
+    n4 = signal.convolve2d(w, k4, boundary='fill', mode='same')
+    door = utils.isin(agent.current_level().objects, G.DOOR_OPENED)
+    return walkable & (np.where(door, n4, n8) <= 2)
+
+
 def get_priorities(agent):
     """ Returns a pair (move priority heatmap, other actions (with priorities) list) """
     walkable = agent.current_level().walkable
@@ -521,10 +620,26 @@ def get_priorities(agent):
     #         priority += get_corridors_priority_map(walkable)
     #         break
 
+    # CHOKEPOINT_FIGHT: the +4 outweighs the 'strike first' +3 two squares off, not the -9 of stepping next to
+    # a monster nor any attack (melee ~16)
+    hold = False
+    if jf_config.CHOKEPOINT_FIGHT and _chokepoint_group(agent, monsters):
+        choke = chokepoint_mask(agent, walkable)
+        priority[choke] += 4
+        bl = agent.blstats
+        hold = choke[bl.y, bl.x] and getattr(agent, '_choke_holds', 0) < jf_config.CHOKEPOINT_HOLD_TURNS and \
+            not any(adjacent((bl.y, bl.x), (m[1], m[2])) for m in monsters)
+    else:
+        agent._choke_holds = 0
+
     # use relative priority to te current position
     priority -= priority[agent.blstats.y, agent.blstats.x]
 
     actions = get_available_actions(agent, monsters)
+    if hold and not any(a[1][0] in ('melee', 'kick', 'ranged', 'zap') for a in actions):
+        # stay in the corridor/door for the pack to come (above goto_action's 1; a move to a better chokepoint
+        # square, e.g. one a monster will step next to, still wins)
+        actions.append((1.5, ('hold',)))
     if not any(a[1][0] in ('melee', 'kick', 'ranged') for a in actions):
         actions.extend(goto_action(agent, priority, monsters))
     return priority, actions

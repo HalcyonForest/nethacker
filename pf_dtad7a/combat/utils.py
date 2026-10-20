@@ -36,6 +36,8 @@ def action_str(agent, action):
         return f'{priority:.1f}e'
     elif a[0] == 'wait':
         return f'{priority:.1f}w'
+    elif a[0] == 'hold':
+        return f'{priority:.1f}h'
     elif a[0] == 'go_to':
         return f'{priority}goto:{a[1]},{a[2]}'
     else:

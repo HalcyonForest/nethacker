@@ -997,15 +997,6 @@ class Inventory:
             return 'shop'
         return None
 
-    def ranged_combinations_for_action(self):
-        # Retain all parent inventory admission and best-melee reserves.
-        items = [i for i in flatten_items(self.items) if i.shop_status != Item.UNPAID]
-        pairs = self.get_ranged_combinations(items)
-        main = self.items.main_hand
-        if main is not None and main.status == Item.CURSED:
-            pairs = [(l, a) for l, a in pairs if l is None or l.equipped]
-        return pairs
-
     def get_best_ranged_set(self, items=None, *, throwing=True, allow_best_melee=False,
                             allow_wielded_melee=False,
                             return_dps=False, allow_unknown_status=False, additional_ammo=[]):

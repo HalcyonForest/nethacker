@@ -412,6 +412,28 @@ def read_strategy(agent):
 
 # ------------------------------------------------------------------------------------------------ instruments
 
+def _instrument_glyph_kind(agent, item):
+    """Use only a single consistent, non-hallucinatory observed horn glyph.
+
+    Adapted from vkurenkov/nethacker@069aea065c26e8665a794b8d8ebb11ed05234b9a
+    INSTRUMENT_GLYPH. NLE's o_init.c leaves tool descriptions unshuffled.
+    Other tools and ambiguous/absent glyphs retain the existing selector.
+    """
+    if getattr(agent.character.prop, 'hallu', True) or len(item.glyphs or []) != 1:
+        return None
+    glyph = item.glyphs[0]
+    if not nh.glyph_is_normal_object(glyph):
+        return None
+    obj = O.objects[nh.glyph_to_obj(glyph)]
+    if obj not in item.objs:
+        return None
+    if obj == TOOLED_HORN:
+        return 'scare'
+    if obj == HORN_OF_PLENTY:
+        return 'plenty'
+    return None
+
+
 def instrument_kind(agent, item):
     """'scare' (tooled horn, any drum, a horn that scared when blown), 'horn' (an unknown horn: tooled 5/11, frost
     2/11, fire 2/11, plenty 2/11), 'camera', or None."""
@@ -430,6 +452,8 @@ def instrument_kind(agent, item):
         return None
     if objs <= HORNS:
         what = state(agent).horn_glyphs.get(item.glyphs[0] if item.glyphs else None)
+        if what is None:
+            what = _instrument_glyph_kind(agent, item)
         if what == 'scare':
             return 'scare'
         if what is not None:

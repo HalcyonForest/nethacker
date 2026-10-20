@@ -17,6 +17,19 @@ _ACTIONS = tuple(nh.ACTIONS)
 _ACTION_TO_INDEX = {int(action): index for index, action in enumerate(_ACTIONS)}
 
 
+def _warm_jit() -> None:
+    # The public source already uses this pure warmup in adapter_pf_s25p8.
+    # Menu actions do not mean BFS is compiled. Compile before driver timing;
+    # the official reset/action timeouts stay unchanged.
+    import numpy as np
+    from pf_dtad7a import utils
+    walkable = np.zeros((21, 79), dtype=bool)
+    walkable[10, 10:13] = True
+    utils.bfs(np.int64(10), np.int64(10), walkable=walkable,
+              walkable_diagonally=walkable, can_squeeze=False)
+    jf_log.log("DRIVER BFS JIT warmup completed")
+
+
 class AgentHang(autoascend_agent.AgentPanic):
     """Injected into an agent thread that stopped producing actions (a livelock)."""
 
@@ -119,6 +132,7 @@ class AutoAscendDriver:
     RESTART_TIMEOUT = 20.0
 
     def __init__(self, action_timeout: float = 100.0, hang_timeout: float = 20.0) -> None:
+        _warm_jit()
         self._action_timeout = action_timeout
         self._hang_timeout = hang_timeout
         self._warm = False  # set once any agent in this process produced an action
@@ -130,12 +144,14 @@ class AutoAscendDriver:
         self._thread_error: str | None = None
         self._sent_first_action = False
         self._restarts = 0
+        self._readiness_seen = set()
         self._fallback_action = _ACTION_TO_INDEX[int(autoascend_agent.A.Command.ESC)]
 
     def reset(self, initial_observation: Mapping[str, Any]) -> None:
         del initial_observation
         self.close()
         self._restarts = 0
+        self._readiness_seen = set()
         self._episode_start = time.monotonic()
         self._gave_up = False
         self._start(fresh_game=True)
@@ -163,7 +179,63 @@ class AutoAscendDriver:
         self._restarts += 1
         self._start(fresh_game=False)
 
+
+    def _observe_readiness(self, observation):
+        # Raw public input only: never read/update Agent, inventory or level caches.
+        try:
+            stats = observation.get('blstats')
+            if stats is None or len(stats) < 25:
+                return
+            dungeon, level, depth = int(stats[23]), int(stats[24]), int(stats[12])
+            if dungeon != 0 or depth not in (5, 10) or depth in self._readiness_seen:
+                return
+            # Attempt once per actual episode, including on serialization/log errors.
+            self._readiness_seen.add(depth)
+            def text(value):
+                if isinstance(value, str):
+                    return value.split('\x00', 1)[0]
+                if isinstance(value, (bytes, bytearray, memoryview)):
+                    raw = bytes(value)
+                else:
+                    raw = bytes(int(byte) for byte in value)
+                return raw.split(b'\x00', 1)[0].decode('utf-8', errors='replace')
+            def scalar(value):
+                if isinstance(value, (bytes, bytearray, memoryview, str)):
+                    return text(value)
+                return int(value)
+            strings = observation.get('inv_strs')
+            letters = observation.get('inv_letters')
+            classes = observation.get('inv_oclasses')
+            glyphs = observation.get('inv_glyphs')
+            rows = []
+            if strings is not None:
+                if len(strings) > 128:
+                    raise ValueError('inventory row count exceeds public schema bound')
+                for index, value in enumerate(strings):
+                    rows.append(dict(index=index, text=text(value),
+                        letter=None if letters is None or index >= len(letters) else scalar(letters[index]),
+                        oclass=None if classes is None or index >= len(classes) else scalar(classes[index]),
+                        glyph=None if glyphs is None or index >= len(glyphs) else scalar(glyphs[index])))
+            import json
+            payload = dict(schema='readiness-public-v1', phase='before_driver_act',
+                milestone=depth, dungeon=dungeon, level=level,
+                blstats=[int(value) for value in stats],
+                inventory_present=dict(inv_strs=strings is not None, inv_letters=letters is not None,
+                    inv_oclasses=classes is not None, inv_glyphs=glyphs is not None),
+                inventory=rows)
+            message = 'READINESS ' + json.dumps(payload, ensure_ascii=True, separators=(',', ':'))
+            if len(message.encode('ascii')) > 65536:
+                raise ValueError('readiness record exceeds 65536 bytes')
+            jf_log.log(message)
+        except Exception as error:
+            # A diagnostic failure must not change the legal action or trigger recovery.
+            try:
+                jf_log.log('READINESS_ERROR ' + type(error).__name__)
+            except Exception:
+                pass
+
     def act(self, observation: Mapping[str, Any]) -> int:
+        self._observe_readiness(observation)
         try:
             return self._act(observation)
         except Exception:

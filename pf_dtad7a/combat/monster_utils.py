@@ -1,5 +1,6 @@
 # heuristic monster types lists
 from .. import jf_config
+from ..glyph import MON
 
 # the Oracle: passive magic missiles on every melee hit (a hallucinating XL9 angered, hit and died to her)
 ONLY_RANGED_SLOW_MONSTERS = ['floating eye', 'blue jelly', 'brown mold', 'gas spore', 'acid blob', 'Oracle']
@@ -13,6 +14,14 @@ EXPLODING_MONSTERS = ['yellow light', 'gas spore', 'flaming sphere', 'freezing s
 INSECTS = ['giant ant', 'killer bee', 'soldier ant', 'fire ant', 'giant beetle', 'queen bee']
 WEAK_MONSTERS = ['lichen', 'newt', 'shrieker', 'grid bug']
 WEIRD_MONSTERS = ['leprechaun', 'nymph']
+
+
+def infectious_were(agent, mon):
+    """A were in animal form (werejackal/wererat/werewolf as d/r) while we can still catch lycanthropy from its
+    bite (not already a lycanthrope, not polymorphed, seeing true monsters) -- WERE_KEEP_AWAY."""
+    return jf_config.WERE_KEEP_AWAY and 'were' in mon.mname and ord(mon.mlet) != MON.S_HUMAN \
+        and not agent.character.is_lycanthrope and not agent.character.prop.polymorph \
+        and not agent.character.prop.hallu
 
 
 def is_monster_faster(agent, monster):
@@ -64,7 +73,15 @@ def consider_melee_only_ranged_if_hp_full(agent, monster):
     if name == 'gelatinous cube':
         return _adjacent_turns(agent, monster) >= 6 and bl.hitpoints >= 0.4 * bl.max_hitpoints
     # their passive cold does nothing to a cold-resistant Valkyrie
-    if name in ('brown mold', 'blue jelly') and \
-            (bl.hitpoints == bl.max_hitpoints or agent.character.role == agent.character.VALKYRIE):
+    # hypothesis: the 'HP full' melee permission made things worse. uhitm.c passive() deals (lvl+1)d6 cold
+    # (2d6 for a brown mold, 5d6 for a blue jelly) on 2/3 of swings while the target lives, heals it by half the
+    # damage, and splits it once its max HP passes (lvl+1)*8. A Tourist's -4 unskilled dart stab can't outpace
+    # that: #2's seed 8 swung at full HP, got 'The brown mold multiplies from your heat!', and stood boxed in
+    # between three molds on Dlvl 1 at (8,23) for ~4500 turns (Elbereth rest, swing, rest) until it fainted from
+    # hunger. Without cold resistance they are only targets for thrown darts or squares to walk around (bfs).
+    # sources: https://nethackwiki.com/wiki/Brown_mold, https://nethackwiki.com/wiki/Blue_jelly,
+    # https://nethackwiki.com/wiki/Passive_attack, https://nethackwiki.com/wiki/Fungus,
+    # https://lparchive.org/Nethack-(by-Lobster-Maneuver)/Update%202/ (player: shoot molds, melee only with care)
+    if name in ('brown mold', 'blue jelly') and agent.character.role == agent.character.VALKYRIE:
         return True
     return False
